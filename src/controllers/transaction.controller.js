@@ -99,51 +99,66 @@ async function createTransaction(req, res) {
         })
     }
 
-    /**
-     * 5. Create transaction (PENDING)
-     */
-    const session = await mongoose.startSession()
-    session.startTransaction()
+    let transaction;
 
-    const transaction = (await transactionModel.create([{
-        fromAccount,
-        toAccount, 
-        amount, 
-        idempotencyKey,
-        status: "PENDING"
-    }], { session }))[0]
+    try {
 
-    /**
-     * 6. Create DEBIT ledger entry
-     */
-    const debitLedgerEntry = await ledgerModel.create([{
-        account: fromAccount,
-        amount: amount,
-        transaction: transaction._id,
-        type: "DEBIT"
-    }], { session })
+        /**
+         * 5. Create transaction (PENDING)
+         */
+        const session = await mongoose.startSession()
+        session.startTransaction()
 
-    /**
-     * 7. Create CREDIT ledger entry
-     */
-    const creditLedgerEntry = await ledgerModel.create([{
-        account: toAccount,
-        amount: amount,
-        transaction: transaction._id,
-        type: "CREDIT"
-    }], { session })
+        transaction = (await transactionModel.create([{
+            fromAccount,
+            toAccount, 
+            amount, 
+            idempotencyKey,
+            status: "PENDING"
+        }], { session }))[0]
 
-    /**
-     * 8. Mark transaction COMPLETED
-     */
-    transaction.status = "COMPLETED"
-    await transaction.save({ session })
+        /**
+         * 6. Create DEBIT ledger entry
+         */
+        const debitLedgerEntry = await ledgerModel.create([{
+            account: fromAccount,
+            amount: amount,
+            transaction: transaction._id,
+            type: "DEBIT"
+        }], { session })
 
-    /**
-     * 9. Commit MongoDB session
-     */
-    await session.commitTransaction()
-    session.endSession()
+        /**
+         * 7. Create CREDIT ledger entry
+         */
+        const creditLedgerEntry = await ledgerModel.create([{
+            account: toAccount,
+            amount: amount,
+            transaction: transaction._id,
+            type: "CREDIT"
+        }], { session })
+
+        /**
+         * 8. Mark transaction COMPLETED
+         */
+        // transaction.status = "COMPLETED"
+        // await transaction.save({ session })
+        await transactionModel.findOneAndUpdate(
+            { _id: transaction._id },
+            { status: "COMPLETED" },
+            { session }
+        )
+
+        /**
+         * 9. Commit MongoDB session
+         */
+        await session.commitTransaction()
+        session.endSession()
+
+    } catch (err) {
+        return res.status(400).json({
+            message: "Transaction is pending due to some issues, please retry after sometime"
+        })
+    }
 
     /**
      * 10. Send email notification
